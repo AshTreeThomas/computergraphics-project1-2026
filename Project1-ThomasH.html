@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project 1 - Level 0</title>
+    <style>
+    body {
+        margin: 0;
+        overflow: hidden;
+        background: #050510;
+        color: white;
+        font-family: Arial, sans-serif;
+    }
+
+    canvas {
+        display: block;
+    }
+
+    #info {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        padding: 12px 14px;
+        background: rgba(0, 0, 0, 0.6);
+        border-radius: 8px;
+        font-size: 14px;
+        line-height: 1.4;
+    }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div id="info">
+        <b>Project 1</b><br>
+        <b>By Thomas H</b><br>
+        <b>Controls: Arrows to move, R to reset, L for levels</b><br>
+    </div>
+
+<script>
+    //Basics
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    let currentLevel = 0; // Hit L to cycle the levels later
+    //Lvl 2 and 3 Basics - Mainly based off the 2 homeworks from class
+    const rows = 200;
+    const cols = 320;
+    const pixelGrid = Array.from({ length: cols }, () => Array(rows).fill("#050510"));
+    const depthGrid = Array.from( { length: cols }, () => Array(rows).fill(Infinity) );
+    let seePixelOutline = false;//IMPORTANT - WHEN TRUE - this will reduce performance A LOT!!!
+
+    // --- Objects Section ---
+    const carSize = { //Scale Factor
+        Sml:  { x: 1.0,  y: 1.0,  z: 1.0 },
+        Med: { x: 1.25, y: 1.25, z: 1.5 }, //SUV
+        Lrg:  { x: 1.5,  y: 1.5,  z: 3.5 } //Truck
+    };
+    const carKeys = Object.keys(carSize);
+
+    // 3D Cube for lvl 0 just from the homework
+    let cubeVertices = [ 
+        { x:  1,  y: 1,  z: 1},   
+        { x: -1,  y: 1,  z: 1},   
+        { x:  1,  y: -1, z: 1},   
+        { x: -1,  y: -1, z:  1},  
+        { x:  1,  y: 1,  z: -1},  
+        { x: -1,  y: 1,  z: -1},  
+        { x:  1,  y: -1, z: -1},  
+        { x: -1,  y: -1, z: -1}   
+    ];
+    let cubeEdges = [
+        [0, 1], 
+        [0, 2], 
+        [0, 4], 
+        [2, 3], 
+        [1, 3], 
+        [2, 6], 
+        [4, 5], 
+        [4, 6], 
+        [1, 5], 
+        [6, 7], 
+        [5, 7], 
+        [3, 7]  
+    ];
+
+    //Cars (yes there rectangles, I am lazy)
+    let carVertices = [
+        { x:  1, y:  1, z:  2 }, // 0
+        { x: -1, y:  1, z:  2 }, // 1
+        { x:  1, y: -1, z:  2 }, // 2
+        { x: -1, y: -1, z:  2 }, // 3
+        { x:  1, y:  1, z: -2 }, // 4
+        { x: -1, y:  1, z: -2 }, // 5
+        { x:  1, y: -1, z: -2 }, // 6
+        { x: -1, y: -1, z: -2 }  // 7
+    ];
+    let carEdges = [
+        [0, 1], [0, 2], [0, 4], [2, 3],
+        [1, 3], [2, 6], [4, 5], [4, 6],
+        [1, 5], [6, 7], [5, 7], [3, 7]
+    ];
+    //funny thing here is, since i kept the one face culling method from github tutorial, if you reverse the triangles rotations the depth testing looks very funny!
+    let carTriangles = [
+        [2, 1, 0], [2, 3, 1], // front
+        [5, 6, 4], [7, 6, 5], // back
+        [1, 4, 0], [5, 4, 1], // top
+        [6, 3, 2], [6, 7, 3], // bottom
+        [4, 2, 0], [4, 6, 2], // right
+        [3, 5, 1], [7, 5, 3]  // left
+    ];
+    //Road - looks different on level 1-2 than on 3
+    let roadVertices = [
+        // Outer Edges
+        { x: -5, y: -1, z: 0 },
+        { x:  5, y: -1, z: 0 },
+        { x: -5, y: -1, z: 100 },
+        { x:  5, y: -1, z: 100 },
+        // Center Line Dashes for wireframe modes, partners are on the same line
+        { x: 0, y: -1, z: 5 },  { x: 0, y: -1, z: 15 }, // 4, 5
+        { x: 0, y: -1, z: 25 }, { x: 0, y: -1, z: 35 }, // 6, 7
+        { x: 0, y: -1, z: 45 }, { x: 0, y: -1, z: 55 }, // 8, 9
+        { x: 0, y: -1, z: 65 }, { x: 0, y: -1, z: 75 }, // 10, 11
+        { x: 0, y: -1, z: 85 }, { x: 0, y: -1, z: 95 }  // 12, 13
+    ];
+    let roadEdges = [
+        [0, 2], [1, 3], // Left & Right road borders
+        [4, 5], [6, 7], [8, 9], [10, 11], [12, 13] // Center dashes
+    ];
+    let roadTriangles = [
+        [0, 1, 2],
+        [1, 3, 2] // WOW! So much detail
+    ];
+
+    //Object viewing setup
+    //these are just initializing everything
+    let camera = { x: 0, y: 0, z: -10 };
+    let playerCar = { x: -2, y: 0, z: 5, color: "red", scale: carSize.Sml };
+    let trafficCar1 = { x: 2, y: 0, z: 10, color: "blue", scale: carSize.Sml };
+    let trafficCar2 = { x: -2, y: 0, z: 15, color: "green", scale: carSize.Sml };
+    let roadPos = {x: 0, y:0, z:0, color: "gray", scale: carSize.Sml}; //car size small is just the 1.0 scale factor
+
+
+
+    // --- Drawing Section ---
+    function draw(){
+        //I'm just doing a bunch of if statements with the level variable
+        if (currentLevel == 0) { //just the lvl 0 cube, based off the homework from class
+            ctx.fillStyle = "#050510";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawWireframe(cubeVertices, cubeEdges, { x: 0, y: 0, z: 0 }, "white"); 
+
+        } else if (currentLevel == 1) { //Wireframe modes of Driving Game
+            ctx.fillStyle = "#050510";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            //Draw wireframe is the draw function for lvl 1-2, even though it doesnt need to take the .color or .scale as there in the 3rd variable, it's easier on my eyes in the other function
+            drawWireframe(roadVertices, roadEdges, roadPos, roadPos.color);
+            drawWireframe(carVertices, carEdges, trafficCar1, trafficCar1.color, trafficCar1.scale);
+            drawWireframe(carVertices, carEdges, trafficCar2, trafficCar2.color, trafficCar2.scale);
+            drawWireframe(carVertices, carEdges, playerCar, playerCar.color, playerCar.scale);
+
+        } else if (currentLevel == 2) { //Pixelated, going based off the "line-drawing practice" homework thing
+            //Clean slate grid
+            for (let u = 0; u < cols; u++) {
+                for (let v = 0; v < rows; v++) {
+                    pixelGrid[u][v] = "#050510";
+                }
+            }
+            drawWireframe(roadVertices, roadEdges, roadPos, "white"); //If you put the grid lines on, white is a much better color to see.
+            drawWireframe(carVertices, carEdges, trafficCar1, trafficCar1.color, trafficCar1.scale);
+            drawWireframe(carVertices, carEdges, trafficCar2, trafficCar2.color, trafficCar2.scale);
+            drawWireframe(carVertices, carEdges, playerCar, playerCar.color, playerCar.scale);
+            ctx.fillStyle = "#050510";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            //Function to turn pixel grid into 5x5
+            for (let v = 0; v < rows; v++) {
+                for (let u = 0; u < cols; u++) {
+                    ctx.fillStyle = pixelGrid[u][v];
+                    ctx.fillRect(u * 5, v * 5, 5, 5);
+                    //IMPORTANT - this will reduce performance A LOT!!!
+                    if (seePixelOutline) {
+                        ctx.strokeStyle = "#444444";
+                        ctx.strokeRect(u * 5, v * 5, 5, 5);
+                    }
+                }
+            }
+        }
+
+        else if (currentLevel == 3) { //Triangles, I had ai helping with the depth stuff, the stucture until the final drawtriangle is largely the same as previous
+            // Clear color and depth
+            for (let u = 0; u < cols; u++) {
+                for (let v = 0; v < rows; v++) {
+                    pixelGrid[u][v] = "#050510";
+                    depthGrid[u][v] = Infinity; //to inf and beyond
+                }
+            }
+            drawTriangles(roadVertices, roadTriangles, roadPos, roadPos.scale); //road here is proper because it likes to blow up if i dont :)
+            drawTriangles(carVertices,carTriangles,trafficCar1,trafficCar1.scale);
+            drawTriangles(carVertices,carTriangles,trafficCar2,trafficCar2.scale);
+            drawTriangles(carVertices,carTriangles,playerCar,playerCar.scale);
+            ctx.fillStyle = "#050510";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            //Function to turn pixel grid into 5x5
+            for (let v = 0; v < rows; v++) {
+                for (let u = 0; u < cols; u++) {
+                    ctx.fillStyle = pixelGrid[u][v];
+                    ctx.fillRect(u * 5, v * 5, 5, 5);
+                    //IMPORTANT - this will reduce performance A LOT!!!
+                    if (seePixelOutline) {
+                        ctx.strokeStyle = "#444444";
+                        ctx.strokeRect(u * 5, v * 5, 5, 5);
+                    }
+                }
+            }
+        }
+    }
+
+    //This sets pixel color... I know, very complicated
+    function setPixelColor(u, v, color){
+        if (u >= 0 && u < cols && v >= 0 && v < rows) { //If i don't set bounds, it blows up on level 2 and 3
+            pixelGrid[u][v] = color;
+        }
+    }
+
+    //Main call draw function for lvl 0-2, based off the class slides and homework
+    function drawWireframe(vertices, edges, position, color, scale=carSize.Sml) {    
+        let projectedVertices = [];
+        // Project 3D vertices into 2D canvas space
+        for (let v = 0; v < vertices.length; v++) {
+            let camVert = {}; 
+            //scale factor is added in here
+            camVert.x = (vertices[v].x * scale.x + position.x) - camera.x;
+            camVert.y = (vertices[v].y * scale.y + position.y) - camera.y;
+            camVert.z = (vertices[v].z * scale.z + position.z) - camera.z;
+            let canvasPos = {};
+            canvasPos.u = camVert.x / camVert.z;
+            canvasPos.v = camVert.y / camVert.z;
+
+            // Scale and center relative to screen size - I recommend full screen for level 2 and 3(3 doesnt use this function though)
+            if (currentLevel == 2) {
+                //for the 320x200 grid just the halfs for center
+                canvasPos.u = canvasPos.u * 320 + 160; 
+                canvasPos.v = canvasPos.v * 200 + 100;
+            } else {
+                canvasPos.u = canvasPos.u * canvas.width + canvas.width / 2;
+                canvasPos.v = canvasPos.v * canvas.height + canvas.height / 2;
+            }
+            projectedVertices.push(canvasPos);
+        }
+
+        // Draw all edges loop, from homework
+        for (let e = 0; e < edges.length; e++) {
+            let e1 = edges[e][0];
+            let u1 = projectedVertices[e1].u; 
+            let v1; //merging the lvl 0-1 and 2, these are below in the if else
+
+            let e2 = edges[e][1];
+            let u2 = projectedVertices[e2].u;
+            let v2;
+
+            if (currentLevel == 2) {
+                v1 = 200 - projectedVertices[e1].v; //cuz its 320x200, we already know the garuanteed height
+                v2 = 200 - projectedVertices[e2].v;
+            } else {
+                v1 = canvas.height - projectedVertices[e1].v;
+                v2 = canvas.height - projectedVertices[e2].v;
+            }
+            drawLine(u1, v1, u2, v2, color);
+        }
+    }
+
+    // Main call draw function for lvl 3, like i said previously, I had ai help with the depth
+    function drawTriangles(vertices, triangles, position, scale) {
+        let projectedVertices = [];
+        let cameraVertices = []; //this is for the depth testing, to save the z
+
+        // Project all vertices, same old same old
+        for (let v = 0; v < vertices.length; v++) {
+            let camVert = {};
+            camVert.x = (vertices[v].x * scale.x + position.x) - camera.x;
+            camVert.y = (vertices[v].y * scale.y + position.y) - camera.y; 
+            camVert.z = (vertices[v].z * scale.z + position.z) - camera.z;
+            cameraVertices.push(camVert); //saving z
+            let canvasPos = {};
+            canvasPos.u = camVert.x / camVert.z;
+            canvasPos.v = camVert.y / camVert.z;
+            //since this is only for the 5x5 grid just using the lvl 2 thing
+            canvasPos.u = canvasPos.u * 320 + 160;
+            canvasPos.v = canvasPos.v * 200 + 100;
+            canvasPos.v = 200 - canvasPos.v;
+            projectedVertices.push(canvasPos);
+        }
+        //final Draw call loop
+        //loops through every triangle of the object and calls
+        for (let t = 0; t < triangles.length; t++) {
+            //grabbing the vertices of triangle instance
+            let a = triangles[t][0];
+            let b = triangles[t][1];
+            let c = triangles[t][2];
+            //final draw functions actual call, grabs the 2d positions, the 3d z positions and the color
+            drawTriangle(projectedVertices[a], projectedVertices[b], projectedVertices[c], cameraVertices[a].z, cameraVertices[b].z, cameraVertices[c].z, position.color);
+        }
+    }
+
+    //edge function to see if a pixel is inside the triangle
+    //Based off the github tutorial link on the project page
+    function edgeFunction(A, B, P) { 
+        return (P.u - A.u) * (B.v - A.v) - (P.v - A.v) * (B.u - A.u);
+    }
+
+    //Basic drawline function for lvl 0-2, based off the homeworks
+    function drawLine(x1, y1, x2, y2, color="white") {
+        if (currentLevel == 2) {
+            //AYE JUST ROUND EVERYTHING - better safe then sorry
+            makePixelatedLine(Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2), color);
+        } else {
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+    }
+    
+    //Pixelated line for lvl 2
+    function makePixelatedLine(u1, v1, u2, v2, color) {
+        // lines that are more horizontal, google search response helped here with this and the drawing one direction
+        if (Math.abs(u2 - u1) >= Math.abs(v2 - v1)) {
+        // drawing left to right
+            if (u1 > u2) {
+                let temp = u1;
+                u1 = u2;
+                u2 = temp;
+                temp = v1;
+                v1 = v2;
+                v2 = temp;
+            }
+            //now the equation from class
+            let v = v1;
+            let s = (v2 - v1) / (u2 - u1);
+            for (let u = u1; u <= u2; u++) {
+                setPixelColor(u, Math.round(v), color);
+                v += s;
+            }
+        } else {
+        // lines that are more vertical
+        // drawing one direction again, google search response helped here
+            if (v1 > v2) {
+                let temp = u1;
+                u1 = u2;
+                u2 = temp;
+                temp = v1;
+                v1 = v2;
+                v2 = temp;
+            }
+            //eq from class
+            let u = u1;
+            let s = (u2 - u1) / (v2 - v1);
+            for (let v = v1; v <= v2; v++) {
+                setPixelColor(Math.round(u), v, color);
+                u += s;
+            }
+        }
+    }
+
+    //basically the drawing function for triangles
+    //largely based off the github tutorial on project page
+    function drawTriangle(A, B, C, zA, zB, zC, color) {
+        // Get the bounding box of the triangle -git hub
+        let minX = Math.max(0, Math.floor(Math.min(A.u, B.u, C.u)));
+        let minY = Math.max(0, Math.floor(Math.min(A.v, B.v, C.v)));
+        let maxX = Math.min(cols - 1, Math.ceil(Math.max(A.u, B.u, C.u)));
+        let maxY = Math.min(rows - 1, Math.ceil(Math.max(A.v, B.v, C.v)));
+
+        // Loop through every pixel in bounding box -git hub
+        for (let v = minY; v <= maxY; v++) {
+            for (let u = minX; u <= maxX; u++) {
+                let P = { u: u, v: v };
+                //check relative locations
+                let ABP = edgeFunction(A, B, P);
+                let BCP = edgeFunction(B, C, P);
+                let CAP = edgeFunction(C, A, P);
+
+                // Check if pixel is inside triangle -github
+                if (ABP >= 0 && BCP >= 0 && CAP >= 0) {
+                    // barycentric for the depth
+                    let area = edgeFunction(A, B, C);
+                    let weightA  = BCP / area; //
+                    let weightB  = CAP / area;
+                    let weightC  = ABP / area;
+                    //instead of rgb or whatever we just use the depth/z values
+                    let z = weightA * zA + weightB * zB + weightC * zC;
+                    // Comparing the depths
+                    if (z < depthGrid[u][v]) {
+                        depthGrid[u][v] = z;
+                        pixelGrid[u][v] = color; //winner decides color
+                    }
+                }
+            }
+        }
+    }
+
+    //This is gameplay mechanics including actions and continuity
+    function updateGameMovement(stepForward) {
+        const scaleNumber = Math.floor(Math.random() * 3) + 1; // Grabbing a random value to determine car instance
+        //Player and Camera advance together like a follow cam
+        camera.z += 2;
+        playerCar.z += 2;
+        //Traffic advances slower than driver
+        trafficCar1.z += 1.25;
+        trafficCar2.z += 1.25;
+        
+        //Respawn traffic cars ahead if behind me
+        //this is so i can ignore objects being behind me! in a way this also improves performance.
+        if (trafficCar1.z <= camera.z + 7) { // 7 was chosen due to the length of the truck (size.Lrg)
+            trafficCar1.z = playerCar.z + 40; //just throw it ahead
+            //Determine which car type(scale) to spawn
+            if (scaleNumber == 1) {
+                trafficCar1.scale = carSize.Sml
+            } else if (scaleNumber == 2) {
+                trafficCar1.scale = carSize.Med
+            } else if (scaleNumber == 3) {
+                trafficCar1.scale = carSize.Lrg
+            }
+        }
+        if (trafficCar2.z <= camera.z + 7) {
+            trafficCar2.z = playerCar.z + 50; // 50 instead of 40 so the slowly change relative distances every time you pass. feels like random traffic.
+            if (scaleNumber == 1) {
+                trafficCar2.scale = carSize.Sml
+            } else if (scaleNumber == 2) {
+                trafficCar2.scale = carSize.Med
+            } else if (scaleNumber == 3) {
+                trafficCar2.scale = carSize.Lrg
+            }
+        }
+        //Behold my genius! make the road long and chuck it ahead every few ticks so it looks infinite. 
+        // Not the prettiest but it gets the job done. 
+        if (roadPos.z <= camera.z + 1) {
+            roadPos.z = playerCar.z - 2;
+        }
+    }
+
+    //Key binds
+    //Up - Changes cam on lvl 0 - Moves car forward on lvl 1+
+    //Down - Always changes cam further back - can make inf road look better on lvl 1+
+    //Left + Right - Changes cam on lvl 0 - move car left and right on lvl 1+
+    //R - Reset cam based on lvl (y=0 on lvl 0, y=3 on lvl 1+), full reset on lvl 1+
+    //L - cycle through levels
+    document.addEventListener("keydown", (event) => {
+        switch (event.key) {
+            case "ArrowUp":
+                if (currentLevel === 0) {
+                    camera.z++;
+                } else {
+                    updateGameMovement(true);
+                }
+                draw();
+                break;
+            case "ArrowDown":
+                camera.z--;
+                draw();
+                break;
+            case "ArrowLeft":
+                if (currentLevel == 0) {
+                    camera.x--;
+                } else {
+                    playerCar.x -= 1; // Steers player car left
+                    updateGameMovement(true);
+                }
+                draw();
+                break;
+            case "ArrowRight":
+                if (currentLevel === 0) {
+                    camera.x++;
+                } else {
+                    playerCar.x += 1; // Steers player car right
+                    updateGameMovement(true);
+                }
+                draw();
+                break;
+            case "r": //Reset
+                if (currentLevel == 0) {
+                    camera = { x: 0, y: 0, z: -10 };
+                } else {
+                    camera = { x: 0, y: 3, z: -10 };
+                }
+                playerCar = { x: -2, y: 0, z: 5, color: "red", scale: carSize.Sml };
+                trafficCar1 = { x: 2, y: 0, z: 20, color: "blue", scale: carSize.Sml };
+                trafficCar2 = { x: -2, y: 0, z: 40, color: "green", scale: carSize.Sml };
+                roadPos = { x: 0, y: 0, z: 0, color: "gray", scale: carSize.Sml };
+                draw();
+                break;
+            case "l": //level
+                currentLevel++;
+                camera = { x: 0, y: 3, z: -10 };
+                if (currentLevel > 3) {
+                    camera = { x: 0, y: 0, z: -10 };
+                    currentLevel = 0;
+                }
+                draw();
+                break;
+            default:
+                return; 
+        }
+    });
+    
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        draw();
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+</script>
+</body>
+</html>
